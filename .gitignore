@@ -56,3 +56,10 @@ replay_pid*
 
 ### VS Code ###
 .vscode/
+/.s3-state/
+
+### MacOS ###
+*.DS_Store
+
+### AWS Emu / LocalStack ###
+.run/

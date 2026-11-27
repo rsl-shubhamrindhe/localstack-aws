@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S3 playground</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f5f2; color: #182923; font: 1rem/1.5 system-ui, sans-serif; }
+    main { max-width: 68rem; margin: auto; padding: clamp(1rem, 5vw, 4rem); }
+    h1 { margin: 0 0 1.5rem; font-size: clamp(2rem, 6vw, 3.5rem); letter-spacing: -.05em; }
+    h2, p { margin: 0; }
+    h2 { font-size: 1.2rem; }
+    .panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+    section { background: #fff; border: 1px solid #d7e0da; border-radius: .8rem; padding: 1.25rem; }
+    .heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    form, label { display: grid; gap: .55rem; }
+    form { margin-top: 1rem; gap: 1rem; }
+    input, textarea, button { font: inherit; }
+    input, textarea { width: 100%; background: #fafcfb; color: inherit; border: 1px solid #a8bbb0; border-radius: .4rem; padding: .65rem; }
+    textarea { resize: vertical; }
+    button { cursor: pointer; background: #14513f; color: #fff; border: 1px solid #14513f; border-radius: .4rem; padding: .5rem .85rem; }
+    button.secondary { background: #fff; color: #14513f; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .detail { color: #4d6359; font-size: .9rem; }
+    #bucket, #list-status { margin-top: .7rem; }
+    ul { margin: .6rem 0 0; padding: 0; list-style: none; }
+    li { border-top: 1px solid #e0e8e3; padding: .65rem 0; overflow-wrap: anywhere; }
+    @media (max-width: 650px) { .panels { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>S3 playground</h1>
+    <div class="panels">
+      <section aria-labelledby="objects-title">
+        <div class="heading">
+          <h2 id="objects-title">Objects <span id="count"></span></h2>
+          <button class="secondary" id="refresh" type="button">Refresh</button>
+        </div>
+        <p class="detail" id="bucket"></p>
+        <p id="list-status" role="status">Loading objects…</p>
+        <ul id="objects"></ul>
+      </section>
+      <section aria-labelledby="add-title">
+        <h2 id="add-title">Add a text object</h2>
+        <form id="object-form">
+          <label>Object key <input name="key" placeholder="notes/hello.txt" required maxlength="1024"></label>
+          <label>Contents <textarea name="text" rows="6"></textarea></label>
+          <p class="detail">Saving an existing key replaces its contents.</p>
+          <button id="save" type="submit">Save object</button>
+          <p id="save-status" role="status"></p>
+        </form>
+      </section>
+    </div>
+  </main>
+  <script>
+    const count = document.querySelector('#count');
+    const bucket = document.querySelector('#bucket');
+    const objects = document.querySelector('#objects');
+    const listStatus = document.querySelector('#list-status');
+    const refresh = document.querySelector('#refresh');
+    const form = document.querySelector('#object-form');
+    const save = document.querySelector('#save');
+    const saveStatus = document.querySelector('#save-status');
+
+    async function loadObjects() {
+      refresh.disabled = true;
+      save.disabled = true;
+      listStatus.textContent = 'Loading objects…';
+      try {
+        const response = await fetch('/s3', { cache: 'no-store' });
+        if (!response.ok) throw new Error();
+        const listing = await response.json();
+        bucket.textContent = listing.bucket;
+        count.textContent = `(${listing.count})`;
+        const items = document.createDocumentFragment();
+        for (const key of listing.objects) {
+          const item = document.createElement('li');
+          item.textContent = key;
+          items.append(item);
+        }
+        objects.replaceChildren(items);
+        listStatus.textContent = listing.bucketExists
+          ? (listing.count ? '' : 'This bucket is empty.')
+          : 'The configured bucket does not exist.';
+      } catch {
+        count.textContent = '';
+        objects.replaceChildren();
+        listStatus.textContent = 'Could not load objects from S3.';
+      } finally {
+        refresh.disabled = false;
+        save.disabled = false;
+      }
+    }
+
+    refresh.addEventListener('click', loadObjects);
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const { key, text } = Object.fromEntries(new FormData(form));
+      if (!key.trim() || new TextEncoder().encode(key).length > 1024) {
+        saveStatus.textContent = 'Enter a nonblank object key of up to 1024 UTF-8 bytes.';
+        return;
+      }
+      save.disabled = true;
+      refresh.disabled = true;
+      saveStatus.textContent = 'Saving…';
+      try {
+        const response = await fetch('/s3', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, text })
+        });
+        if (!response.ok) {
+          saveStatus.textContent = {
+            400: 'Enter a valid object key and text.',
+            405: 'This Spring Boot instance does not support saving yet. Restart the app and try again.',
+            503: 'Spring Boot could not write to S3. Check the bucket and S3 configuration.'
+          }[response.status] ?? `Save failed (HTTP ${response.status}).`;
+          return;
+        }
+        form.reset();
+        saveStatus.textContent = `Saved ${key}.`;
+        await loadObjects();
+      } catch {
+        saveStatus.textContent = 'Could not reach Spring Boot. Check that the app is running.';
+      } finally {
+        save.disabled = false;
+        refresh.disabled = false;
+      }
+    });
+    loadObjects();
+  </script>
+</body>
+</html>
